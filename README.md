@@ -1,21 +1,21 @@
-= Funkwhale API library
+# Funkwhale API library
 
 The document about Funkwhale API is located [here](https://docs.funkwhale.audio/swagger/).
 
-== How to build
-* Create token.h with your data (token.template.h is an example of the header)
-* Add ```cover.jpg``` and ```test.mp3``` into a root path of the project
-* Run ```make submodule init && make submodule update``` to get submodules
-* ```make``` will build both id3v2lib and funkwhale api
+## How to build
+* Create ``token.h`` with your data (``token.template.h`` is an example of the header)
+* Add ``cover.jpg`` and ``test.mp3`` into a root path of the project
+* Run ``make submodule init && make submodule update`` to get submodules
+* ``make`` will build both id3v2lib and funkwhale api
 
-== Dependencies
+## Dependencies
 * id3v2lib (included into the project as a submodule)
 * CURL
 * cJSON
 
-== TODO list
+## TODO list
 
-=== Implement Auth and security requests API
+### Implement Auth and security requests API
 - [x] GET /authorize
 - [x] POST /api/v1/oauth/apps
 - [ ] POST /api/v1/oauth/token
@@ -26,7 +26,7 @@ The document about Funkwhale API is located [here](https://docs.funkwhale.audio/
 - [ ] POST /api/v1/users/change-email
 - [ ] GET /api/v1/rate-limit
 
-=== Implement Library and metadata requests API
+### Implement Library and metadata requests API
 - [x] GET /api/v1/artists
 - [ ] GET /api/v1/artists/{id}
 - [ ] GET /api/v1/artists/{id}/libraries
@@ -40,7 +40,7 @@ The document about Funkwhale API is located [here](https://docs.funkwhale.audio/
 - [ ] GET /api/v1/licenses
 - [ ] GET /api/v1/licenses/{code}
 
-=== Implement Uploading and audio content API
+### Implement Uploading and audio content API
 - [x] GET /api/v1/libraries
 - [ ] POST /api/v1/libraries
 - [ ] GET /api/v1/libraries/{uuid}
@@ -53,7 +53,7 @@ The document about Funkwhale API is located [here](https://docs.funkwhale.audio/
 - [ ] DELETE /api/v1/uploads/{uuid}
 - [ ] GET /api/v1/uploads/{uuid}/audio-file-metadata
 
-=== Implement Channels and subscriptions API
+### Implement Channels and subscriptions API
 - [x] GET /api/v1/channels
 - [ ] POST /api/v1/channels
 - [x] GET /api/v1/channels/metadata-choices
@@ -68,7 +68,7 @@ The document about Funkwhale API is located [here](https://docs.funkwhale.audio/
 - [ ] GET /api/v1/subscriptions
 - [ ] GET /api/v1/subscriptions/all
 
-=== Implement Content curation API
+### Implement Content curation API
 - [ ] GET /api/v1/favorites/tracks
 - [ ] POST /api/v1/favorites/tracks
 - [ ] POST /api/v1/favorites/tracks/remove
@@ -85,11 +85,11 @@ The document about Funkwhale API is located [here](https://docs.funkwhale.audio/
 - [ ] POST /api/v1/radios/sessions
 - [ ] POST /api/v1/radios/tracks
 
-=== Implement User activity API
+### Implement User activity API
 - [ ] GET /api/v1/history/listenings
 - [ ] POST /api/v1/history/listenings
 
-=== Implement Other API
+### Implement Other API
 - [ ] GET /api/v1/search
 - [ ] GET /api/v1/instance/settings
 - [ ] POST /api/v1/attachments
