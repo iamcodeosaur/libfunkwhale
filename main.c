@@ -28,6 +28,7 @@
 #define json_parse         cJSON_Parse
 #define json_print         cJSON_Print
 #define json_create_object cJSON_CreateObject
+#define json_create_array  cJSON_CreateArray
 #define json_create_string cJSON_CreateString
 #define json_add_to_object cJSON_AddItemToObject
 #define json_delete        cJSON_Delete
@@ -101,6 +102,7 @@ typedef struct fw_channel {
     char *id;
     char *name;
     char *username;
+    char *descx;
 } fw_channel;
 
 typedef struct fw_language {
@@ -137,6 +139,8 @@ typedef enum fw_metadata_type {
 } fw_metadata_type;
 
 typedef struct funkctx {
+    FILE *devnull;
+
     CURL *curl;
     char url[256];
 
@@ -182,16 +186,18 @@ typedef struct fw_track_tags {
 funkctx*
 fw_init(char *scheme, const char *server)
 {
-    FILE *null = fopen("/dev/null", "w");
-    funkctx *ctx = calloc(sizeof(funkctx), 1);
+    funkctx *ctx = calloc(sizeof(funkctx), 1); // Don't forget to free
 
     if (!ctx)
         return NULL;
 
     ctx->curl = curl_easy_init();
-    if (!ctx->curl)
+    if (!ctx->curl) {
+        free(ctx);
         return NULL;
+    }
 
+    ctx->devnull = fopen("/dev/null", "r+"); // Don't forget to close
     snprintf(ctx->url, sizeof(ctx->url), "%s://%s", scheme, server);
 
     curl_easy_setopt(ctx->curl, CURLOPT_DEFAULT_PROTOCOL, scheme);
@@ -200,15 +206,13 @@ fw_init(char *scheme, const char *server)
     curl_easy_setopt(ctx->curl, CURLOPT_UNRESTRICTED_AUTH, 1L);
     curl_easy_setopt(ctx->curl, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(ctx->curl, CURLOPT_AUTOREFERER, 1L);
-    curl_easy_setopt(ctx->curl, CURLOPT_WRITEDATA, null);
+    curl_easy_setopt(ctx->curl, CURLOPT_WRITEDATA, ctx->devnull);
+    curl_easy_setopt(ctx->curl, CURLOPT_ERRORBUFFER, ctx->error);
 
     if (curl_easy_perform(ctx->curl) != CURLE_OK) {
-        fclose(null);
         free(ctx);
         return NULL;
     }
-
-    fclose(null);
 
     return ctx;
 }
@@ -355,6 +359,7 @@ clean_results(funkctx *ctx)
 bool
 fw_get_metadata(funkctx *ctx, fw_metadata_type type)
 {
+    CURLcode rc;
     FILE *resp_file = tmpfile(); // Don't forget to close
     char *resp;
     size_t resp_sz;
@@ -378,16 +383,17 @@ fw_get_metadata(funkctx *ctx, fw_metadata_type type)
     curl_easy_setopt(ctx->curl, CURLOPT_REQUEST_TARGET, request);
     curl_easy_setopt(ctx->curl, CURLOPT_WRITEDATA, resp_file);
     curl_easy_setopt(ctx->curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(ctx->curl, CURLOPT_ERRORBUFFER, ctx->error);
 
-    if (curl_easy_perform(ctx->curl) != CURLE_OK) {
-        fclose(resp_file);
-        curl_slist_free_all(headers);
-        return false;
-    }
+    rc = curl_easy_perform(ctx->curl);
 
+    curl_easy_setopt(ctx->curl, CURLOPT_WRITEDATA, ctx->devnull);
     curl_easy_setopt(ctx->curl, CURLOPT_HTTPHEADER, NULL);
     curl_slist_free_all(headers);
+
+    if (rc != CURLE_OK) {
+        fclose(resp_file);
+        return false;
+    }
 
     resp_sz = fsize(resp_file);
     resp = mmap(NULL, resp_sz, PROT_READ, MAP_PRIVATE, fileno(resp_file), 0); // file is mapped. Don't forget to unmap
@@ -458,6 +464,7 @@ fw_get_metadata(funkctx *ctx, fw_metadata_type type)
 bool
 fw_get(funkctx *ctx, fw_request_type req_type, const char *search)
 {
+    CURLcode rc;
     FILE *resp_file = tmpfile(); // Don't forget to close
     char *resp;
     size_t resp_sz;
@@ -512,16 +519,17 @@ fw_get(funkctx *ctx, fw_request_type req_type, const char *search)
     curl_easy_setopt(ctx->curl, CURLOPT_REQUEST_TARGET, request);
     curl_easy_setopt(ctx->curl, CURLOPT_WRITEDATA, resp_file);
     curl_easy_setopt(ctx->curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(ctx->curl, CURLOPT_ERRORBUFFER, ctx->error);
 
-    if (curl_easy_perform(ctx->curl) != CURLE_OK) {
-        fclose(resp_file);
-        curl_slist_free_all(headers);
-        return false;
-    }
+    rc = curl_easy_perform(ctx->curl);
 
+    curl_easy_setopt(ctx->curl, CURLOPT_WRITEDATA, ctx->devnull);
     curl_easy_setopt(ctx->curl, CURLOPT_HTTPHEADER, NULL);
     curl_slist_free_all(headers);
+
+    if (rc != CURLE_OK) {
+        fclose(resp_file);
+        return false;
+    }
 
     resp_sz = fsize(resp_file);
     resp = mmap(NULL, resp_sz, PROT_READ, MAP_PRIVATE, fileno(resp_file), 0); // file is mapped. Don't forget to unmap
@@ -628,6 +636,8 @@ fw_get(funkctx *ctx, fw_request_type req_type, const char *search)
 bool
 fw_upload_track(funkctx *ctx, const char *lib_id, fw_track_tags *tags)
 {
+    CURLcode rc;
+
     size_t resp_size;
     FILE *resp_file = tmpfile(); // Don't forget to close
     char *resp;
@@ -643,7 +653,6 @@ fw_upload_track(funkctx *ctx, const char *lib_id, fw_track_tags *tags)
     struct curl_slist *headers = NULL;
 
     char boundary[16];
-    char content_type[512];
 
     ID3v2_tag *tag = new_tag(); // Dont forget to free
 
@@ -655,7 +664,7 @@ fw_upload_track(funkctx *ctx, const char *lib_id, fw_track_tags *tags)
     tag_set_year(tags->year, 3, tag);
     tag_set_album_cover(tags->cover_file, tag);
 
-    {   // Making mp3id3v2 taged pointer
+    {   // Making mp3id3v2 taged pointer. Don't forget to unmap ``mp3``
         char mp3id_name[] = "/tmp/XXXXXX";
         FILE *mp3id_file = fdopen(mkstemp(mp3id_name), "r+");
 
@@ -665,13 +674,11 @@ fw_upload_track(funkctx *ctx, const char *lib_id, fw_track_tags *tags)
         unlink(mp3id_name);
 
         mp3_size = fsize(mp3id_file);
-        mp3 = mmap(NULL, mp3_size, PROT_READ, MAP_PRIVATE, fileno(mp3id_file), 0); // Don't forget to unmap
+        mp3 = mmap(NULL, mp3_size, PROT_READ, MAP_PRIVATE, fileno(mp3id_file), 0);
         fclose(mp3id_file);
     }
 
     gen_str(boundary, sizeof(boundary) - 1);
-
-    snprintf(content_type, sizeof(content_type), "Content-Type: multipart/form-data; boundary=\"%s\"", boundary);
 
     fprintf(post_file, "--%s\r\n", boundary);
     fprintf(post_file, "Content-Disposition: form-data; name=\"library\"\r\n\r\n");
@@ -687,7 +694,7 @@ fw_upload_track(funkctx *ctx, const char *lib_id, fw_track_tags *tags)
     fprintf(post_file, "pending\r\n");
     fprintf(post_file, "--%s\r\n", boundary);
     fprintf(post_file, "Content-Disposition: form-data; name=\"import_metadata\"\r\n\r\n");
-    fprintf(post_file, "{\"title\": \"%s\", \"position\": 1}\r\n", tags->title);
+    fprintf(post_file, "{\"title\": \"%s\", \"position\": %d}\r\n", tags->title, atoi(tags->track)); // TODO
     fprintf(post_file, "--%s\r\n", boundary);
     fprintf(post_file, "Content-Disposition: form-data; name=\"audio_file\"; filename=\"filename.mp3\"\"\r\n");
     fprintf(post_file, "Content-Type: audio/mpeg\r\n");
@@ -699,7 +706,7 @@ fw_upload_track(funkctx *ctx, const char *lib_id, fw_track_tags *tags)
 
     munmap((void*)mp3, mp3_size);
 
-    { // set headers
+    {   // set headers. Don't forget to free ``headers``
         char *scheme = NULL;
 
         curl_easy_getinfo(ctx->curl, CURLINFO_SCHEME, &scheme);
@@ -707,7 +714,7 @@ fw_upload_track(funkctx *ctx, const char *lib_id, fw_track_tags *tags)
         if (*ctx->user_token && scheme && !strcasecmp(scheme, "https"))
             headers = curl_slist_append(headers, strcat((char[512]){"Authorization: Bearer "}, ctx->user_token));
 
-        headers = curl_slist_append(headers, content_type); // Don't forget to free
+        headers = curl_slist_append(headers, strcat((char[512]){"Content-Type: multipart/form-data; boundary="}, boundary));
     }
 
     post_size = fsize(post_file);
@@ -720,20 +727,20 @@ fw_upload_track(funkctx *ctx, const char *lib_id, fw_track_tags *tags)
     curl_easy_setopt(ctx->curl, CURLOPT_POSTFIELDSIZE, post_size);
     curl_easy_setopt(ctx->curl, CURLOPT_POSTFIELDS, post_buf);
     curl_easy_setopt(ctx->curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(ctx->curl, CURLOPT_ERRORBUFFER, ctx->error);
 
-    if (curl_easy_perform(ctx->curl) != CURLE_OK) {
-        fclose(resp_file);
-        munmap(post_buf, post_size);
-        curl_slist_free_all(headers);
+    rc = curl_easy_perform(ctx->curl);
 
-        return false;
-    }
-
-    curl_easy_setopt(ctx->curl, CURLOPT_ERRORBUFFER, NULL);
+    curl_easy_setopt(ctx->curl, CURLOPT_WRITEDATA, ctx->devnull);
+    curl_easy_setopt(ctx->curl, CURLOPT_POSTFIELDSIZE, 0);
+    curl_easy_setopt(ctx->curl, CURLOPT_POSTFIELDS, "");
     curl_easy_setopt(ctx->curl, CURLOPT_HTTPHEADER, NULL);
     munmap(post_buf, post_size);
     curl_slist_free_all(headers);
+
+    if (rc != CURLE_OK) {
+        fclose(resp_file);
+        return false;
+    }
 
     resp_size = fsize(resp_file);
     resp = mmap(NULL, resp_size, PROT_READ, MAP_PRIVATE, fileno(resp_file), 0); // Don't forget to unmap
@@ -747,8 +754,85 @@ fw_upload_track(funkctx *ctx, const char *lib_id, fw_track_tags *tags)
 }
 
 bool
+fw_create_channel(funkctx *ctx, fw_channel *channel)
+{
+    CURLcode rc;
+
+    FILE *resp_file = tmpfile(); // a file was opened. Don't forget to close
+    size_t resp_size;
+    char *resp;
+
+    char *post_str;
+    cJSON *post;
+
+    struct curl_slist *headers = NULL;
+    char *scheme = NULL;
+
+    post = json_create_object(); // json object was allocated. Don't forget to free
+
+    json_add_to_object(post, "name", json_create_string(channel->name));
+    json_add_to_object(post, "username", json_create_string(channel->username));
+    json_add_to_object(post, "tags", json_create_array());
+    json_add_to_object(post, "content_category", json_create_string("music"));
+    json_add_to_object(post, "cover", json_create_string(""));
+    // TODO: add metadata object
+
+    {
+        cJSON *description = json_create_object();
+
+        json_add_to_object(description, "text", json_create_string(channel->descx));
+        json_add_to_object(description, "content_type", json_create_string("text/plain"));
+        json_add_to_object(post, "description", description);
+    }
+
+    post_str = json_print(post);
+    json_delete(post);
+
+    curl_easy_getinfo(ctx->curl, CURLINFO_SCHEME, &scheme);
+
+    // Don't send an Authorization header if it is not a https connection
+    if (*ctx->user_token && scheme && !strcasecmp(scheme, "https"))
+        headers = curl_slist_append(headers, strcat((char[512]){"Authorization: Bearer "}, ctx->user_token));
+
+    headers = curl_slist_append(headers, "Content-Type: application/json"); // Don't forget to free the headers
+
+    curl_easy_setopt(ctx->curl, CURLOPT_POST, 1L);
+    curl_easy_setopt(ctx->curl, CURLOPT_REQUEST_TARGET, "/api/v1/channels");
+    curl_easy_setopt(ctx->curl, CURLOPT_WRITEDATA, resp_file);
+    curl_easy_setopt(ctx->curl, CURLOPT_POSTFIELDSIZE, strlen(post_str));
+    curl_easy_setopt(ctx->curl, CURLOPT_POSTFIELDS, post_str);
+    curl_easy_setopt(ctx->curl, CURLOPT_HTTPHEADER, headers);
+
+    rc = curl_easy_perform(ctx->curl);
+
+    curl_easy_setopt(ctx->curl, CURLOPT_WRITEDATA, ctx->devnull);
+    curl_easy_setopt(ctx->curl, CURLOPT_POSTFIELDSIZE, 0);
+    curl_easy_setopt(ctx->curl, CURLOPT_POSTFIELDS, "");
+    curl_easy_setopt(ctx->curl, CURLOPT_HTTPHEADER, NULL);
+    free(post_str);
+    curl_slist_free_all(headers);
+
+    if (rc != CURLE_OK) {
+        fclose(resp_file);
+        return false;
+    }
+
+    resp_size = fsize(resp_file);
+    resp = mmap(NULL, resp_size, PROT_READ, MAP_PRIVATE, fileno(resp_file), 0); // Don't forget to unmap
+    fclose(resp_file);
+
+    printf("%.*s\n\n", (int)resp_size, resp);
+
+    munmap(resp, resp_size);
+
+    return true;
+}
+
+bool
 fw_get_app_token(funkctx *ctx, const char *app_name, const char *scope)
 {
+    CURLcode rc;
+
     FILE *resp_file = tmpfile(); // a file was opened. Don't forget to close
     size_t resp_size;
     char *resp;
@@ -775,21 +859,20 @@ fw_get_app_token(funkctx *ctx, const char *app_name, const char *scope)
     curl_easy_setopt(ctx->curl, CURLOPT_POSTFIELDSIZE, strlen(post_str));
     curl_easy_setopt(ctx->curl, CURLOPT_POSTFIELDS, post_str);
     curl_easy_setopt(ctx->curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(ctx->curl, CURLOPT_ERRORBUFFER, ctx->error);
 
-    if (curl_easy_perform(ctx->curl) != CURLE_OK) {
-        fclose(resp_file);
-        free(post_str);
-        curl_slist_free_all(headers);
+    rc = curl_easy_perform(ctx->curl);
 
-        return false;
-    }
-
-    curl_easy_setopt(ctx->curl, CURLOPT_ERRORBUFFER, NULL);
+    curl_easy_setopt(ctx->curl, CURLOPT_WRITEDATA, ctx->devnull);
+    curl_easy_setopt(ctx->curl, CURLOPT_POSTFIELDSIZE, 0);
+    curl_easy_setopt(ctx->curl, CURLOPT_POSTFIELDS, "");
     curl_easy_setopt(ctx->curl, CURLOPT_HTTPHEADER, NULL);
-
     free(post_str);
     curl_slist_free_all(headers);
+
+    if (rc != CURLE_OK) {
+        fclose(resp_file);
+        return false;
+    }
 
     resp_size = fsize(resp_file);
     resp = mmap(NULL, resp_size, PROT_READ, MAP_PRIVATE, fileno(resp_file), 0); // Don't forget to unmap
@@ -823,7 +906,8 @@ const char*
 fw_get_auth_url(funkctx *ctx)
 {
     if (!*ctx->auth_url) {
-        snprintf(ctx->auth_url, sizeof(ctx->auth_url), "%s/authorize?response_type=code&redirect_uri=%s&clint_id=%s&scope=%s",
+        snprintf(ctx->auth_url, sizeof(ctx->auth_url),
+                 "%s/authorize?response_type=code&redirect_uri=%s&clint_id=%s&scope=%s",
                  ctx->url,
                  url_encode(ctx->redirect_uri, (char[3*sizeof(ctx->redirect_uri)]){'\0'}),
                  url_encode(ctx->client_id,    (char[3*sizeof(ctx->client_id)]){'\0'}),
@@ -859,10 +943,17 @@ main(void)
     fw_set_app_token(ctx, APP_ID, APP_SECRET, "read write:libraries", "urn:ietf:wg:oauth:2.0:oob");
     fw_set_user_token(ctx, USER_TOKEN);
 
-    if (!fw_get(ctx, FW_CHANNELS, NULL)) {
-        printf("ERROR\n");
-        printf("%s\n", fw_error_str(ctx));
-    }
+    fw_channel channel = {
+        .name = "Test channel",
+        .username = "testchannel",
+        .descx = "Description of the channel",
+    };
+
+    if (!fw_create_channel(ctx, &channel))
+        printf("An error occured\n");
+
+    if (!fw_get(ctx, FW_CHANNELS, NULL))
+        printf("An error occured while getting channels\n");
 
     print_results(ctx);
 

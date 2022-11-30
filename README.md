@@ -55,7 +55,7 @@ The document about Funkwhale API is located [here](https://docs.funkwhale.audio/
 
 ### Implement Channels and subscriptions API
 - [x] GET /api/v1/channels
-- [ ] POST /api/v1/channels
+- [x] POST /api/v1/channels
 - [x] GET /api/v1/channels/metadata-choices
 - [ ] GET /api/v1/channels/{uuid}
 - [ ] POST /api/v1/channels/{uuid}
