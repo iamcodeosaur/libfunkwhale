@@ -92,6 +92,6 @@ The document about Funkwhale API is located [here](https://docs.funkwhale.audio/
 ### Implement Other API
 - [ ] GET /api/v1/search
 - [ ] GET /api/v1/instance/settings
-- [ ] POST /api/v1/attachments
+- [x] POST /api/v1/attachments
 - [ ] GET /api/v1/attachments/{uuid}
 - [ ] DELETE /api/v1/attachments/{uuid}

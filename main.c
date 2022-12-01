@@ -122,6 +122,11 @@ typedef struct fw_category {
     fw_subcategory *sub;
 } fw_category;
 
+typedef struct fw_attachment {
+    char *id;
+    char *mime;
+} fw_attachment;
+
 typedef enum fw_request_type {
     FW_NOTHING,
     FW_ARTISTS,
@@ -130,6 +135,7 @@ typedef enum fw_request_type {
     FW_LIBRARIES,
     FW_CHANNELS,
     FW_METADATA,
+    FW_ATTACHMENTS,
 } fw_request_type;
 
 typedef enum fw_metadata_type {
@@ -158,13 +164,14 @@ typedef struct funkctx {
 
     struct list {
         union {
-            fw_artist   artist;
-            fw_album    album;
-            fw_track    track;
-            fw_library  library;
-            fw_channel  channel;
-            fw_language language;
-            fw_category category;
+            fw_artist     artist;
+            fw_album      album;
+            fw_track      track;
+            fw_library    library;
+            fw_channel    channel;
+            fw_language   language;
+            fw_category   category;
+            fw_attachment attachment;
         };
         struct list *next;
     } *results;
@@ -270,6 +277,10 @@ print_results(funkctx *ctx)
                         break;
                 }
                 break;
+
+            case FW_ATTACHMENTS:
+                printf("%s (%s)\n", ctx->results->attachment.mime, ctx->results->attachment.id);
+                break;
         }
     }
 
@@ -345,6 +356,10 @@ clean_results(funkctx *ctx)
                     default:
                         break;
                 }
+
+            case FW_ATTACHMENTS:
+                free(node->attachment.id);
+                free(node->attachment.mime);
         }
 
         free(node);
@@ -829,6 +844,111 @@ fw_create_channel(funkctx *ctx, fw_channel *channel)
 }
 
 bool
+fw_attach(funkctx *ctx, FILE *file, const char *mime)
+{
+    CURLcode rc;
+
+    size_t file_size;
+    uint8_t *file_buf;
+
+    size_t resp_size;
+    FILE *resp_file = tmpfile(); // Don't forget to close
+    char *resp;
+
+    size_t post_size;
+    FILE *post_file = tmpfile(); // Don't forget to close
+    char *post_buf;
+
+    struct curl_slist *headers = NULL;
+
+    char boundary[16];
+
+    clean_results(ctx);
+    ctx->result_type = FW_ATTACHMENTS;
+
+    file_size = fsize(file);
+    file_buf = mmap(NULL, file_size, PROT_READ, MAP_PRIVATE, fileno(file), 0);
+
+    gen_str(boundary, sizeof(boundary) - 1);
+
+    fprintf(post_file, "--%s\r\n", boundary);
+    fprintf(post_file, "Content-Disposition: form-data; name=\"file\"; filename=\"filename.jpg\"\r\n");
+    // fprintf(post_file, "Content-Type: %s\r\n", mime);
+    fprintf(post_file, "Content-Length: %zu\r\n", file_size);
+    fprintf(post_file, "\r\n");
+    fwrite(file_buf, file_size, 1, post_file);
+    fprintf(post_file, "\r\n");
+    fprintf(post_file, "--%s--\r\n", boundary);
+    fprintf(post_file, "\r\n");
+
+    munmap(file_buf, file_size);
+
+    {   // set headers. Don't forget to free ``headers``
+        char *scheme = NULL;
+
+        curl_easy_getinfo(ctx->curl, CURLINFO_SCHEME, &scheme);
+
+        if (*ctx->user_token && scheme && !strcasecmp(scheme, "https"))
+            headers = curl_slist_append(headers, strcat((char[512]){"Authorization: Bearer "}, ctx->user_token));
+
+        headers = curl_slist_append(headers, strcat((char[512]){"Content-Type: multipart/form-data; boundary="}, boundary));
+    }
+
+    post_size = fsize(post_file);
+    post_buf = mmap(NULL, post_size, PROT_READ, MAP_PRIVATE, fileno(post_file), 0);
+    fclose(post_file);
+
+    curl_easy_setopt(ctx->curl, CURLOPT_POST, 1L);
+    curl_easy_setopt(ctx->curl, CURLOPT_REQUEST_TARGET, "/api/v1/attachments");
+    curl_easy_setopt(ctx->curl, CURLOPT_WRITEDATA, resp_file);
+    curl_easy_setopt(ctx->curl, CURLOPT_POSTFIELDSIZE, post_size);
+    curl_easy_setopt(ctx->curl, CURLOPT_POSTFIELDS, post_buf);
+    curl_easy_setopt(ctx->curl, CURLOPT_HTTPHEADER, headers);
+
+    rc = curl_easy_perform(ctx->curl);
+
+    curl_easy_setopt(ctx->curl, CURLOPT_WRITEDATA, ctx->devnull);
+    curl_easy_setopt(ctx->curl, CURLOPT_POSTFIELDSIZE, 0);
+    curl_easy_setopt(ctx->curl, CURLOPT_POSTFIELDS, "");
+    curl_easy_setopt(ctx->curl, CURLOPT_HTTPHEADER, NULL);
+    munmap(post_buf, post_size);
+    curl_slist_free_all(headers);
+
+    if (rc != CURLE_OK) {
+        fclose(resp_file);
+        return false;
+    }
+
+    resp_size = fsize(resp_file);
+    resp = mmap(NULL, resp_size, PROT_READ, MAP_PRIVATE, fileno(resp_file), 0); // Don't forget to unmap
+    fclose(resp_file);
+
+    {
+        char *id;
+        char *mime;
+        cJSON *json;
+
+        json = json_parse(resp);
+
+        id = json_getobj(json, "uuid")->valuestring;
+        mime = json_getobj(json, "mimetype")->valuestring;
+
+        ctx->results = calloc(sizeof(*ctx->results), 1);
+        ctx->results->attachment.id = calloc(strlen(id) + 1, 1);
+        ctx->results->attachment.mime = calloc(strlen(mime) + 1, 1);
+
+        strcpy(ctx->results->attachment.id, id);
+        strcpy(ctx->results->attachment.mime, mime);
+
+        json_delete(json);
+    }
+
+    munmap(resp, resp_size);
+
+    return true;
+}
+
+bool
 fw_get_app_token(funkctx *ctx, const char *app_name, const char *scope)
 {
     CURLcode rc;
@@ -943,6 +1063,7 @@ main(void)
     fw_set_app_token(ctx, APP_ID, APP_SECRET, "read write:libraries", "urn:ietf:wg:oauth:2.0:oob");
     fw_set_user_token(ctx, USER_TOKEN);
 
+    /*
     fw_channel channel = {
         .name = "Test channel",
         .username = "testchannel",
@@ -955,6 +1076,10 @@ main(void)
     if (!fw_get(ctx, FW_CHANNELS, NULL))
         printf("An error occured while getting channels\n");
 
+    print_results(ctx);
+    */
+
+    fw_attach(ctx, fopen("./cover.jpg", "r"), "image/jpeg");
     print_results(ctx);
 
     return 0;
