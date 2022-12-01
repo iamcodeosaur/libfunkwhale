@@ -103,6 +103,7 @@ typedef struct fw_channel {
     char *name;
     char *username;
     char *descx;
+    char *cover_id;
 } fw_channel;
 
 typedef struct fw_language {
@@ -789,7 +790,7 @@ fw_create_channel(funkctx *ctx, fw_channel *channel)
     json_add_to_object(post, "username", json_create_string(channel->username));
     json_add_to_object(post, "tags", json_create_array());
     json_add_to_object(post, "content_category", json_create_string("music"));
-    json_add_to_object(post, "cover", json_create_string(""));
+    json_add_to_object(post, "cover", json_create_string(channel->cover_id));
     // TODO: add metadata object
 
     {
@@ -835,8 +836,6 @@ fw_create_channel(funkctx *ctx, fw_channel *channel)
     resp_size = fsize(resp_file);
     resp = mmap(NULL, resp_size, PROT_READ, MAP_PRIVATE, fileno(resp_file), 0); // Don't forget to unmap
     fclose(resp_file);
-
-    printf("%.*s\n\n", (int)resp_size, resp);
 
     munmap(resp, resp_size);
 
@@ -1037,6 +1036,15 @@ fw_get_auth_url(funkctx *ctx)
     return ctx->auth_url;
 }
 
+const char*
+fw_get_cover_id(funkctx *ctx)
+{
+    if (!ctx->results)
+        return "";
+
+    return ctx->results->attachment.id;
+}
+
 bool
 fw_set_user_token(funkctx *ctx, const char *token)
 {
@@ -1063,11 +1071,14 @@ main(void)
     fw_set_app_token(ctx, APP_ID, APP_SECRET, "read write:libraries", "urn:ietf:wg:oauth:2.0:oob");
     fw_set_user_token(ctx, USER_TOKEN);
 
-    /*
+    fw_attach(ctx, fopen("./cover.jpg", "r"), "image/jpeg");
+    print_results(ctx);
+
     fw_channel channel = {
         .name = "Test channel",
         .username = "testchannel",
         .descx = "Description of the channel",
+        .cover_id = (char*)fw_get_cover_id(ctx),
     };
 
     if (!fw_create_channel(ctx, &channel))
@@ -1076,10 +1087,6 @@ main(void)
     if (!fw_get(ctx, FW_CHANNELS, NULL))
         printf("An error occured while getting channels\n");
 
-    print_results(ctx);
-    */
-
-    fw_attach(ctx, fopen("./cover.jpg", "r"), "image/jpeg");
     print_results(ctx);
 
     return 0;
